@@ -14,7 +14,7 @@ const configs = [
         name: '我的机场',
         domain: '7m9gi9norz.1095813.xyz',
         checkinUrl: 'https://7m9gi9norz.1095813.xyz/api/v1/user/trial/checkin',
-        cookie: '',
+        cookie: 'user_device_id=6fc208d3f9c34f8e880df9ceb351809d; user_device_id_timestamp=1761714395338; dark_mode=0; crisp-client%2Fsession%2F73cbaaf8-cb6d-4c90-9c26-9d656ff4603a=session_50a2e371-898d-4134-8052-f67e0f402b4a',
     }
 ];
 
