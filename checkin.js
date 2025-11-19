@@ -1,115 +1,133 @@
-[Script]
-# 获取Cookie - 访问机场网站时自动获取
-http-request ^https?:\/\/.+\.(com|net|org)\/user.* script-path=checkin.js, timeout=10, tag=获取机场Cookie
-
-# 定时签到任务 - 每天早上8点执行
-cron "0 8 * * *" script-path=checkin.js, timeout=60, tag=机场每日签到
-
-[MITM]
-# 添加你的机场域名，例如：
-hostname = 7m9gi9norz.1095813.xyz
-
 /**
- * 机场签到脚本
- * 
- * 使用说明：
- * 1. 先手动访问机场网站进行登录，获取Cookie
- * 2. 配置定时任务每天自动执行签到
+ * 机场签到脚本 - 增强版
+ * 支持更好的 Cookie 获取和调试
  */
 
 const $ = new Env('机场签到');
 
-// 配置区域 - 填写你的机场信息
+// ============ 配置区域 ============
 const configs = [
     {
-        name: '机场1',  // 机场名称
-        url: 'https://your-airport1.com/user/checkin',  // 签到API地址
-        cookie: '',  // Cookie会自动获取，也可手动填写
-    },
-    // 可以添加多个机场
-    // {
-    //     name: '机场2',
-    //     url: 'https://your-airport2.com/user/checkin',
-    //     cookie: '',
-    // }
+        name: '我的机场',
+        domain: 'your-airport.com',  // 只填域名，不要带 https://
+        checkinUrl: 'https://your-airport.com/user/checkin',  // 签到地址
+        cookie: '',
+    }
 ];
 
-// Cookie获取脚本
+// Cookie 存储的 key
+const COOKIE_KEY = 'airport_cookie_v2';
+
+// ============ Cookie 获取功能 ============
 function getCookie() {
     if (typeof $request !== 'undefined') {
-        const cookie = $request.headers['Cookie'] || $request.headers['cookie'];
         const url = $request.url;
+        const headers = $request.headers;
+        const cookie = headers['Cookie'] || headers['cookie'];
+        
+        // 调试信息
+        console.log('========== Cookie 获取调试 ==========');
+        console.log('请求URL:', url);
+        console.log('所有Headers:', JSON.stringify(headers, null, 2));
+        console.log('Cookie值:', cookie);
+        console.log('=====================================');
         
         if (cookie) {
-            $.setdata(cookie, 'airport_cookie');
-            $.msg('Cookie获取成功', '', `URL: ${url}\nCookie已保存`);
-            console.log(`Cookie: ${cookie}`);
+            // 保存 Cookie
+            const saved = $.setdata(cookie, COOKIE_KEY);
+            console.log('Cookie保存结果:', saved);
+            
+            $.msg(
+                '✅ Cookie获取成功', 
+                '', 
+                `URL: ${url}\n\nCookie已保存\n\n请在脚本中查看完整日志`
+            );
         } else {
-            $.msg('Cookie获取失败', '', '请检查配置');
+            $.msg(
+                '❌ Cookie获取失败', 
+                '', 
+                `URL: ${url}\n\n未找到Cookie\n\n请检查:\n1. 是否已登录\n2. URL匹配规则是否正确\n3. 查看Loon日志获取详细信息`
+            );
         }
+        
         $.done({});
     }
 }
 
-// 签到功能
+// ============ 签到功能 ============
 async function checkin() {
     let messages = [];
     
     for (let config of configs) {
         try {
-            // 如果配置中没有cookie，尝试从本地读取
-            if (!config.cookie) {
-                config.cookie = $.getdata('airport_cookie');
-            }
+            // 获取保存的 Cookie
+            let cookie = config.cookie || $.getdata(COOKIE_KEY);
             
-            if (!config.cookie) {
-                messages.push(`${config.name}: Cookie未配置`);
+            console.log(`========== ${config.name} 签到开始 ==========`);
+            console.log('使用的Cookie:', cookie);
+            
+            if (!cookie) {
+                const msg = 'Cookie未获取，请先访问机场网站登录';
+                messages.push(`${config.name}: ❌ ${msg}`);
+                console.log(msg);
                 continue;
             }
             
             const options = {
-                url: config.url,
+                url: config.checkinUrl,
                 headers: {
-                    'Cookie': config.cookie,
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15',
+                    'Cookie': cookie,
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
                     'Accept': 'application/json, text/plain, */*',
-                    'Content-Type': 'application/json'
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Content-Type': 'application/json;charset=utf-8',
+                    'Referer': `https://${config.domain}/user`,
+                    'Origin': `https://${config.domain}`
                 },
-                body: JSON.stringify({})
+                body: '{}'
             };
             
+            console.log('请求配置:', JSON.stringify(options, null, 2));
+            
             const response = await httpPost(options);
+            console.log('响应状态:', response.response.status);
+            console.log('响应内容:', response.body);
+            
             const data = JSON.parse(response.body);
             
-            // 根据不同机场的返回格式调整
-            if (data.ret === 1 || data.code === 0 || data.msg.includes('成功')) {
-                const msg = data.msg || data.message || '签到成功';
+            // 判断签到结果（兼容多种返回格式）
+            if (
+                data.ret === 1 || 
+                data.code === 0 || 
+                data.status === 'success' ||
+                (data.msg && data.msg.includes('成功')) ||
+                (data.message && data.message.includes('成功'))
+            ) {
+                const msg = data.msg || data.message || data.data || '签到成功';
                 messages.push(`${config.name}: ✅ ${msg}`);
-                console.log(`${config.name} 签到成功: ${msg}`);
+                console.log(`签到成功: ${msg}`);
             } else {
-                const errMsg = data.msg || data.message || '签到失败';
+                const errMsg = data.msg || data.message || data.error || '签到失败';
                 messages.push(`${config.name}: ❌ ${errMsg}`);
-                console.log(`${config.name} 签到失败: ${errMsg}`);
+                console.log(`签到失败: ${errMsg}`);
             }
             
         } catch (e) {
-            messages.push(`${config.name}: ❌ 错误 - ${e.message}`);
-            console.log(`${config.name} 执行出错: ${e}`);
+            const errMsg = e.message || e.toString();
+            messages.push(`${config.name}: ❌ 错误 - ${errMsg}`);
+            console.log(`执行出错:`, e);
         }
         
-        // 延迟避免请求过快
+        console.log(`========== ${config.name} 签到结束 ==========\n`);
         await $.wait(2000);
     }
     
     // 发送通知
-    const title = '机场签到结果';
-    const subtitle = `共 ${configs.length} 个机场`;
-    const content = messages.join('\n');
-    $.msg(title, subtitle, content);
+    $.msg('机场签到结果', `共 ${configs.length} 个机场`, messages.join('\n'));
     $.done();
 }
 
-// HTTP POST 请求
+// ============ HTTP 请求函数 ============
 function httpPost(options) {
     return new Promise((resolve, reject) => {
         $.post(options, (error, response, body) => {
@@ -122,27 +140,36 @@ function httpPost(options) {
     });
 }
 
-// Env 类 - Loon 环境支持
+// ============ 环境函数 ============
 function Env(name) {
     return {
         name: name,
-        setdata: (val, key) => $persistentStore.write(val, key),
-        getdata: (key) => $persistentStore.read(key),
-        msg: (title, subtitle, content) => $notification.post(title, subtitle, content),
+        setdata: (val, key) => {
+            const result = $persistentStore.write(val, key);
+            console.log(`写入持久化存储 [${key}]:`, result ? '成功' : '失败');
+            return result;
+        },
+        getdata: (key) => {
+            const val = $persistentStore.read(key);
+            console.log(`读取持久化存储 [${key}]:`, val ? '有数据' : '无数据');
+            return val;
+        },
+        msg: (title, subtitle, content) => {
+            $notification.post(title, subtitle, content);
+        },
         wait: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
-        get: (options, callback) => $httpClient.get(options, callback),
         post: (options, callback) => $httpClient.post(options, callback),
         done: (value = {}) => $done(value)
     };
 }
 
-// 主执行逻辑
+// ============ 主执行逻辑 ============
 (async () => {
-    // 如果是获取Cookie的请求
     if (typeof $request !== 'undefined') {
+        // Cookie 获取模式
         getCookie();
     } else {
-        // 执行签到
+        // 签到模式
         await checkin();
     }
 })();
