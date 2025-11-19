@@ -9,8 +9,8 @@ const $ = new Env('机场签到');
 const configs = [
     {
         name: '我的机场',
-        domain: 'your-airport.com',  // 只填域名，不要带 https://
-        checkinUrl: 'https://your-airport.com/user/checkin',  // 签到地址
+        domain: '7m9gi9norz.1095813.xyz',  // 只填域名，不要带 https://
+        checkinUrl: 'https://7m9gi9norz.1095813.xyz/api/v1/user/trial/checkin',  // 签到地址
         cookie: '',
     }
 ];
