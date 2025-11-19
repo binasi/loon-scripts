@@ -1,6 +1,9 @@
 /**
  * 机场签到脚本 - 增强版
- * 支持更好的 Cookie 获取和调试
+ * @author binasi
+ * @version 1.0.0
+ * @description 自动获取Cookie并执行签到
+ * @homepage https://github.com/binasi/loon-scripts
  */
 
 const $ = new Env('机场签到');
@@ -9,8 +12,8 @@ const $ = new Env('机场签到');
 const configs = [
     {
         name: '我的机场',
-        domain: '7m9gi9norz.1095813.xyz',  // 只填域名，不要带 https://
-        checkinUrl: 'https://7m9gi9norz.1095813.xyz/api/v1/user/trial/checkin',  // 签到地址
+        domain: '7m9gi9norz.1095813.xyz',
+        checkinUrl: 'https://7m9gi9norz.1095813.xyz/api/v1/user/trial/checkin',
         cookie: '',
     }
 ];
@@ -64,7 +67,7 @@ async function checkin() {
             let cookie = config.cookie || $.getdata(COOKIE_KEY);
             
             console.log(`========== ${config.name} 签到开始 ==========`);
-            console.log('使用的Cookie:', cookie);
+            console.log('使用的Cookie:', cookie ? '已获取' : '未获取');
             
             if (!cookie) {
                 const msg = 'Cookie未获取，请先访问机场网站登录';
@@ -87,7 +90,7 @@ async function checkin() {
                 body: '{}'
             };
             
-            console.log('请求配置:', JSON.stringify(options, null, 2));
+            console.log('请求URL:', options.url);
             
             const response = await httpPost(options);
             console.log('响应状态:', response.response.status);
@@ -100,8 +103,8 @@ async function checkin() {
                 data.ret === 1 || 
                 data.code === 0 || 
                 data.status === 'success' ||
-                (data.msg && data.msg.includes('成功')) ||
-                (data.message && data.message.includes('成功'))
+                (data.msg && (data.msg.includes('成功') || data.msg.includes('已签到'))) ||
+                (data.message && (data.message.includes('成功') || data.message.includes('已签到')))
             ) {
                 const msg = data.msg || data.message || data.data || '签到成功';
                 messages.push(`${config.name}: ✅ ${msg}`);
