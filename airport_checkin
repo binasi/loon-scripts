@@ -1,0 +1,202 @@
+/*
+ * 机场自动签到脚本 - 青龙面板版本
+ * 
+ * 定时规则建议：0 8 * * * （每天早上8点执行）
+ * 环境变量：
+ *   AIRPORT_URL: 机场网站地址（可选，默认使用脚本中的配置）
+ *   AIRPORT_TOKEN: 授权Token（必需，多账号用 & 或 \n 分隔）
+ */
+
+const axios = require('axios');
+const { sendNotify } = require('./sendNotify'); // 青龙面板通知模块
+
+// ==================== 配置区 ====================
+const DEFAULT_CONFIG = {
+  url: 'https://7m9gi9norz.1095813.xyz',
+  apiPath: '/api/v1/user/trial/checkin',
+  timeout: 10000
+};
+
+// ==================== 获取环境变量 ====================
+function getEnvTokens() {
+  const tokens = process.env.AIRPORT_TOKEN || '';
+  if (!tokens) {
+    console.log('❌ 未配置 AIRPORT_TOKEN 环境变量');
+    return [];
+  }
+  
+  // 支持多种分隔符
+  return tokens
+    .split(/[&\n]/)
+    .map(token => token.trim())
+    .filter(token => token);
+}
+
+// ==================== 签到函数 ====================
+async function checkin(token, accountIndex = 1) {
+  const accountName = `账号${accountIndex}`;
+  console.log(`\n========== ${accountName} 开始签到 ==========`);
+  
+  try {
+    const url = process.env.AIRPORT_URL || DEFAULT_CONFIG.url;
+    const fullUrl = `${url}${DEFAULT_CONFIG.apiPath}`;
+    
+    console.log(`📍 请求地址: ${fullUrl}`);
+    console.log(`🔑 Token: ${token.substring(0, 20)}...`);
+    
+    const response = await axios({
+      method: 'POST',
+      url: fullUrl,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token,
+        'Accept': '*/*',
+        'Origin': url,
+        'Referer': `${url}/index.php`,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      },
+      data: {},
+      timeout: DEFAULT_CONFIG.timeout
+    });
+
+    // 解析响应
+    const status = response.status;
+    const data = response.data;
+    
+    console.log(`✅ 响应状态: ${status}`);
+    console.log(`📦 响应数据:`, JSON.stringify(data, null, 2));
+
+    if (status === 200) {
+      // 尝试解析返回信息
+      let message = '';
+      if (typeof data === 'object') {
+        message = data.message || data.msg || JSON.stringify(data);
+      } else {
+        message = String(data);
+      }
+      
+      console.log(`✅ ${accountName} 签到成功！`);
+      console.log(`📝 签到信息: ${message}`);
+      
+      return {
+        success: true,
+        account: accountName,
+        message: message,
+        data: data
+      };
+    } else {
+      console.log(`⚠️ ${accountName} 签到返回异常状态码: ${status}`);
+      return {
+        success: false,
+        account: accountName,
+        message: `状态码 ${status}`,
+        data: data
+      };
+    }
+  } catch (error) {
+    console.log(`❌ ${accountName} 签到失败`);
+    
+    if (error.response) {
+      // 服务器返回错误
+      console.log(`📛 错误状态码: ${error.response.status}`);
+      console.log(`📛 错误信息:`, error.response.data);
+      
+      return {
+        success: false,
+        account: accountName,
+        message: `HTTP ${error.response.status}: ${JSON.stringify(error.response.data)}`,
+        error: error.message
+      };
+    } else if (error.request) {
+      // 请求发出但没有收到响应
+      console.log(`📛 网络错误: 无响应`);
+      return {
+        success: false,
+        account: accountName,
+        message: '网络超时或无响应',
+        error: error.message
+      };
+    } else {
+      // 其他错误
+      console.log(`📛 错误:`, error.message);
+      return {
+        success: false,
+        account: accountName,
+        message: error.message,
+        error: error.message
+      };
+    }
+  }
+}
+
+// ==================== 主函数 ====================
+async function main() {
+  console.log('🚀 机场自动签到脚本启动');
+  console.log(`⏰ 执行时间: ${new Date().toLocaleString('zh-CN')}`);
+  
+  const tokens = getEnvTokens();
+  
+  if (tokens.length === 0) {
+    console.log('\n请在青龙面板配置环境变量：');
+    console.log('变量名: AIRPORT_TOKEN');
+    console.log('变量值: 你的授权Token');
+    console.log('多账号用 & 或换行分隔');
+    return;
+  }
+  
+  console.log(`📊 共找到 ${tokens.length} 个账号`);
+  
+  // 执行签到
+  const results = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const result = await checkin(tokens[i], i + 1);
+    results.push(result);
+    
+    // 多账号间隔，避免请求过快
+    if (i < tokens.length - 1) {
+      console.log('\n⏳ 等待 3 秒...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+  }
+  
+  // 汇总结果
+  console.log('\n========== 签到汇总 ==========');
+  const successCount = results.filter(r => r.success).length;
+  const failCount = results.filter(r => !r.success).length;
+  
+  console.log(`✅ 成功: ${successCount} 个`);
+  console.log(`❌ 失败: ${failCount} 个`);
+  
+  // 构建通知消息
+  let notifyTitle = '✈️ 机场签到通知';
+  let notifyContent = `执行时间: ${new Date().toLocaleString('zh-CN')}\n\n`;
+  notifyContent += `📊 签到统计:\n`;
+  notifyContent += `✅ 成功: ${successCount} 个\n`;
+  notifyContent += `❌ 失败: ${failCount} 个\n\n`;
+  notifyContent += `📝 详细结果:\n`;
+  
+  results.forEach(result => {
+    const status = result.success ? '✅' : '❌';
+    notifyContent += `\n${status} ${result.account}\n`;
+    notifyContent += `   ${result.message}\n`;
+  });
+  
+  // 发送通知（如果配置了通知方式）
+  try {
+    await sendNotify(notifyTitle, notifyContent);
+  } catch (error) {
+    console.log('⚠️ 发送通知失败:', error.message);
+  }
+  
+  console.log('\n🎉 脚本执行完成！');
+}
+
+// ==================== 执行 ====================
+if (require.main === module) {
+  main().catch(error => {
+    console.error('💥 脚本执行出错:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = { checkin, main };
