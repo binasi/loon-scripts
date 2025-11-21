@@ -13,7 +13,7 @@ const CONFIG = {
   url: 'https://7m9gi9norz.1095813.xyz',
   checkinPath: '/api/v1/user/trial/checkin',
   userInfoPath: '/api/v1/user/info',
-  subscribePath: '/api/v1/user/getSubscribe',  // 订阅信息（包含流量）
+  subscribePath: '/api/v1/user/getSubscribe',
 };
 
 // =============== 获取Token ===============
@@ -26,17 +26,14 @@ function getTokens() {
   return token.split(/[&\n]/).map(t => t.trim()).filter(t => t);
 }
 
-// =============== 格式化流量 ===============
+// =============== 格式化流量（修复版）===============
 function formatTraffic(bytes) {
-  // 处理无效值
   if (!bytes || bytes === 0 || isNaN(bytes)) {
     return '0 B';
   }
   
-  // 确保是数字类型
   bytes = Number(bytes);
   
-  // 处理负数
   if (bytes < 0) {
     return '0 B';
   }
@@ -44,19 +41,67 @@ function formatTraffic(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   const k = 1024;
   
-  // 防止 log 计算错误
   if (bytes < k) {
     return bytes.toFixed(2) + ' B';
   }
   
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
-  // 确保索引在合理范围内
-  const unitIndex = Math.min(i, units.length - 1);
-  
+  const unitIndex = Math.min(Math.max(i, 0), units.length - 1);
   const value = bytes / Math.pow(k, unitIndex);
   
   return value.toFixed(2) + ' ' + units[unitIndex];
+}
+
+// =============== 获取在线设备信息 ===============
+async function getOnlineDevices(token) {
+  try {
+    // 尝试获取会话/设备信息
+    const possiblePaths = [
+      '/api/v1/user/server/session',
+      '/api/v1/user/session',
+      '/api/v1/user/devices'
+    ];
+    
+    for (const path of possiblePaths) {
+      try {
+        const url = `${CONFIG.url}${path}`;
+        const response = await axios({
+          method: 'GET',
+          url: url,
+          headers: {
+            'Authorization': token,
+            'Accept': 'application/json',
+          },
+          timeout: 5000,
+          validateStatus: () => true
+        });
+        
+        if (response.status === 200 && response.data) {
+          const data = response.data.data || response.data;
+          
+          // 尝试提取在线设备数
+          let onlineCount = 0;
+          if (Array.isArray(data)) {
+            onlineCount = data.length;
+          } else if (data.online !== undefined) {
+            onlineCount = data.online;
+          } else if (data.count !== undefined) {
+            onlineCount = data.count;
+          }
+          
+          console.log(`✅ 获取到在线设备数: ${onlineCount}`);
+          return onlineCount;
+        }
+      } catch (e) {
+        // 继续尝试下一个路径
+      }
+    }
+    
+    console.log('ℹ️ 无法获取在线设备信息');
+    return null;
+  } catch (error) {
+    return null;
+  }
 }
 
 // =============== 获取流量信息（从订阅接口）===============
@@ -78,20 +123,15 @@ async function getSubscribeInfo(token) {
     });
 
     if (response.status === 200 && response.data) {
-      console.log('📦 订阅信息原始数据:', JSON.stringify(response.data, null, 2));
-      
       const data = response.data.data || response.data;
       
-      // 提取流量信息
       let transferUsed = 0;
       let transferTotal = 0;
       
-      // V2Board 常见格式
       if (data.u !== undefined && data.d !== undefined) {
         transferUsed = Number(data.u || 0) + Number(data.d || 0);
         transferTotal = Number(data.transfer_enable || 0);
         console.log('✅ 从订阅信息获取到流量数据');
-        console.log(`   u=${data.u}, d=${data.d}, transfer_enable=${data.transfer_enable}`);
       }
       
       return { 
@@ -110,7 +150,6 @@ async function getSubscribeInfo(token) {
 // =============== 获取用户信息 ===============
 async function getUserInfo(token) {
   try {
-    // 1. 获取基本用户信息
     const url = `${CONFIG.url}${CONFIG.userInfoPath}`;
     console.log(`📡 获取用户信息: ${url}`);
     
@@ -129,36 +168,28 @@ async function getUserInfo(token) {
     if (response.status === 200 && response.data) {
       const data = response.data.data || response.data;
       
-      // 🔍 调试：打印完整数据
-      console.log('📦 用户信息原始数据:', JSON.stringify(data, null, 2));
-      
       let transferUsed = 0;
       let transferTotal = 0;
       
-      // 尝试从用户信息接口获取流量
       if (data.u !== undefined && data.d !== undefined) {
         transferUsed = Number(data.u || 0) + Number(data.d || 0);
         transferTotal = Number(data.transfer_enable || 0);
         console.log('✅ 从用户信息获取到流量数据');
-        console.log(`   原始值: u=${data.u}, d=${data.d}, transfer_enable=${data.transfer_enable}`);
-        console.log(`   计算值: used=${transferUsed}, total=${transferTotal}`);
       } else {
-        // 2. 如果用户信息没有流量，尝试订阅接口
         console.log('ℹ️ 用户信息中无流量数据，尝试订阅接口...');
         const subscribeInfo = await getSubscribeInfo(token);
         
         if (subscribeInfo) {
           transferUsed = Number(subscribeInfo.transferUsed || 0);
           transferTotal = Number(subscribeInfo.transferTotal || 0);
-          console.log(`   订阅接口: used=${transferUsed}, total=${transferTotal}`);
-        } else {
-          console.log('⚠️ 无法获取流量使用数据');
         }
       }
       
-      // 确保数据类型正确
       transferUsed = Number(transferUsed) || 0;
       transferTotal = Number(transferTotal) || 0;
+      
+      // 获取在线设备数
+      const onlineDevices = await getOnlineDevices(token);
       
       const userInfo = {
         email: data.email || '未知',
@@ -166,17 +197,18 @@ async function getUserInfo(token) {
         transferTotal: transferTotal,
         expireTime: data.expired_at,
         planId: data.plan_id,
-        deviceLimit: data.device_limit,
+        deviceLimit: data.device_limit || null,
+        onlineDevices: onlineDevices,
         uuid: data.uuid
       };
       
       console.log(`\n✅ 解析后的用户信息:`);
       console.log(`   📧 邮箱: ${userInfo.email}`);
-      console.log(`   📊 已用(原始): ${userInfo.transferUsed} bytes`);
-      console.log(`   📊 总量(原始): ${userInfo.transferTotal} bytes`);
-      console.log(`   📊 已用(格式化): ${formatTraffic(userInfo.transferUsed)}`);
-      console.log(`   📊 总量(格式化): ${formatTraffic(userInfo.transferTotal)}`);
-      console.log(`   📱 设备限制: ${userInfo.deviceLimit || '无限'}`);
+      console.log(`   📊 已用: ${formatTraffic(userInfo.transferUsed)}`);
+      console.log(`   📊 总量: ${formatTraffic(userInfo.transferTotal)}`);
+      if (userInfo.deviceLimit) {
+        console.log(`   📱 在线设备: ${userInfo.onlineDevices !== null ? userInfo.onlineDevices : '?'}/${userInfo.deviceLimit}`);
+      }
       
       return userInfo;
     } else {
@@ -188,6 +220,7 @@ async function getUserInfo(token) {
     return null;
   }
 }
+
 // =============== 签到函数 ===============
 async function checkin(token, index) {
   const name = `账号${index}`;
@@ -195,7 +228,6 @@ async function checkin(token, index) {
   console.log(`【${name}】开始签到`);
   console.log(`${'='.repeat(50)}`);
   
-  // 先获取用户信息
   const userInfo = await getUserInfo(token);
   
   try {
@@ -231,7 +263,6 @@ async function checkin(token, index) {
       const data = response.data;
       
       if (typeof data === 'object') {
-        // 提取奖励流量
         if (data.data && data.data.bonus) {
           rewardTraffic = data.data.bonus;
         }
@@ -298,7 +329,6 @@ async function checkin(token, index) {
 
 // =============== 发送通知 ===============
 async function sendNotify(title, content) {
-  // 尝试 sendNotify
   try {
     const paths = ['./sendNotify', '../sendNotify', '/ql/scripts/sendNotify'];
     for (const path of paths) {
@@ -311,7 +341,6 @@ async function sendNotify(title, content) {
     }
   } catch (e) {}
   
-  // Telegram
   const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
   const TG_USER_ID = process.env.TG_USER_ID || process.env.TELEGRAM_CHAT_ID;
   
@@ -353,7 +382,6 @@ async function main() {
   
   console.log(`📊 找到 ${tokens.length} 个账号`);
   
-  // 执行签到
   const results = [];
   for (let i = 0; i < tokens.length; i++) {
     const result = await checkin(tokens[i], i + 1);
@@ -365,7 +393,6 @@ async function main() {
     }
   }
   
-  // 统计
   console.log(`\n${'='.repeat(50)}`);
   console.log('📊 签到汇总');
   console.log(`${'='.repeat(50)}`);
@@ -382,12 +409,20 @@ async function main() {
     if (r.userInfo) {
       console.log(`   📧 ${r.userInfo.email}`);
       if (r.userInfo.transferUsed > 0 || r.userInfo.transferTotal > 0) {
-        console.log(`   📊 ${formatTraffic(r.userInfo.transferUsed)} / ${formatTraffic(r.userInfo.transferTotal)}`);
+        const used = formatTraffic(r.userInfo.transferUsed);
+        const total = formatTraffic(r.userInfo.transferTotal);
+        let infoStr = `   📊 已用 ${used} / 总计 ${total}`;
+        
+        if (r.userInfo.deviceLimit) {
+          const online = r.userInfo.onlineDevices !== null ? r.userInfo.onlineDevices : '?';
+          infoStr += ` 在线设备 ${online}/${r.userInfo.deviceLimit}`;
+        }
+        console.log(infoStr);
       }
     }
   });
   
-  // 构建通知
+  // =============== 构建通知消息（官网风格）===============
   let notifyMsg = `📢 <b>✈️ ${CONFIG.name}签到通知</b>\n\n`;
   notifyMsg += `⏰ ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}\n`;
   notifyMsg += `📊 统计: 成功 ${successCount} / 失败 ${failCount}\n\n`;
@@ -396,7 +431,7 @@ async function main() {
   results.forEach((r, index) => {
     const icon = r.success ? '✅' : '❌';
     notifyMsg += `${icon} <b>${r.name}</b>\n`;
-    notifyMsg += `   ${r.message}\n`;
+    notifyMsg += `   ${r.message}\n\n`;
     
     if (r.userInfo) {
       notifyMsg += `   📧 账号: <code>${r.userInfo.email}</code>\n`;
@@ -404,21 +439,30 @@ async function main() {
       if (r.userInfo.transferUsed > 0 || r.userInfo.transferTotal > 0) {
         const used = formatTraffic(r.userInfo.transferUsed);
         const total = formatTraffic(r.userInfo.transferTotal);
-        const usedPercent = r.userInfo.transferTotal > 0 
-          ? ((r.userInfo.transferUsed / r.userInfo.transferTotal) * 100).toFixed(1)
-          : 0;
         
-        notifyMsg += `   📊 流量: ${used} / ${total} (${usedPercent}%)\n`;
+        // 官网风格：已用 XXX / 总计 XXX 在线设备 X/X
+        let trafficInfo = `   📊 已用 ${used} / 总计 ${total}`;
+        
+        if (r.userInfo.deviceLimit) {
+          const online = r.userInfo.onlineDevices !== null ? r.userInfo.onlineDevices : '?';
+          trafficInfo += ` 在线设备 ${online}/${r.userInfo.deviceLimit}`;
+        }
+        
+        notifyMsg += trafficInfo + '\n';
       } else {
         notifyMsg += `   📊 流量: 试用账号 / 无统计\n`;
       }
       
-      if (r.userInfo.deviceLimit) {
-        notifyMsg += `   📱 设备限制: ${r.userInfo.deviceLimit} 台\n`;
+      // 到期时间（如果有）
+      if (r.userInfo.expireTime) {
+        const expireDate = new Date(r.userInfo.expireTime * 1000).toLocaleDateString('zh-CN');
+        notifyMsg += `   ⏰ 到期: ${expireDate}\n`;
       }
     }
     
     notifyMsg += '\n';
+    
+    // 每个账号之间加分隔线（除了最后一个）
     if (index < results.length - 1) {
       notifyMsg += `${'─'.repeat(30)}\n\n`;
     }
