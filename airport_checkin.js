@@ -2,6 +2,7 @@
  * 机场自动签到 - 青龙面板专用
  * cron: 0 8 * * *
  * 环境变量: AIRPORT_TOKEN (必需)
+ * 通知环境变量: TG_BOT_TOKEN, TG_USER_ID (可选)
  */
 
 const axios = require('axios');
@@ -53,7 +54,7 @@ async function checkin(token, index) {
       },
       data: {},
       timeout: 10000,
-      validateStatus: () => true // 接受所有状态码
+      validateStatus: () => true
     });
 
     console.log(`\n📊 响应状态: ${response.status}`);
@@ -66,11 +67,9 @@ async function checkin(token, index) {
       success = true;
       const data = response.data;
       
-      // 尝试提取消息
       if (typeof data === 'object') {
         message = data.message || data.msg || data.data || JSON.stringify(data);
         
-        // 检查是否真的签到成功
         if (data.ret === 0 || data.code === 0 || data.status === 'success') {
           console.log(`✅ 【${name}】签到成功！`);
         } else if (data.message && data.message.includes('重复')) {
@@ -113,13 +112,80 @@ async function checkin(token, index) {
 
 // =============== 发送通知 ===============
 async function sendNotify(title, content) {
+  // 方法1: 尝试使用青龙面板的 sendNotify
   try {
-    // 尝试使用青龙面板的通知模块
-    const notify = require('./sendNotify');
-    await notify.sendNotify(title, content);
-    console.log('📢 通知已发送');
+    let notify;
+    const paths = [
+      './sendNotify.js',
+      './sendNotify',
+      '../sendNotify.js',
+      '/ql/scripts/sendNotify.js',
+      '/ql/scripts/sendNotify'
+    ];
+    
+    for (const path of paths) {
+      try {
+        notify = require(path);
+        console.log(`📢 找到 sendNotify 模块: ${path}`);
+        await notify.sendNotify(title, content);
+        console.log('✅ 通知发送成功（sendNotify）');
+        return true;
+      } catch (e) {
+        // 继续尝试下一个路径
+      }
+    }
   } catch (e) {
-    console.log('ℹ️ 未配置通知或通知发送失败');
+    console.log('ℹ️ sendNotify 模块不可用');
+  }
+  
+  // 方法2: 使用 Telegram Bot API
+  const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+  const TG_USER_ID = process.env.TG_USER_ID || process.env.TELEGRAM_CHAT_ID || process.env.TG_CHAT_ID;
+  
+  console.log('\n🔍 Telegram 配置检查:');
+  console.log(`  TG_BOT_TOKEN: ${TG_BOT_TOKEN ? '✅ 已配置' : '❌ 未配置'}`);
+  console.log(`  TG_USER_ID: ${TG_USER_ID ? '✅ 已配置' : '❌ 未配置'}`);
+  
+  if (!TG_BOT_TOKEN || !TG_USER_ID) {
+    console.log('❌ Telegram 环境变量未完整配置，跳过通知');
+    return false;
+  }
+  
+  try {
+    const message = `📢 ${title}\n\n${content}`;
+    const url = `https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`;
+    
+    console.log(`📤 正在发送 Telegram 通知...`);
+    
+    const response = await axios.post(url, {
+      chat_id: TG_USER_ID,
+      text: message,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    }, {
+      timeout: 15000
+    });
+    
+    if (response.data.ok) {
+      console.log('✅ Telegram 通知发送成功');
+      return true;
+    } else {
+      console.log('❌ Telegram API 返回失败:', response.data);
+      return false;
+    }
+  } catch (error) {
+    console.log('❌ Telegram 通知发送失败:', error.message);
+    if (error.response) {
+      console.log('   API 错误:', error.response.data);
+      if (error.response.status === 401) {
+        console.log('   提示: Bot Token 可能不正确');
+      } else if (error.response.status === 400) {
+        console.log('   提示: Chat ID 可能不正确');
+      }
+    } else if (error.code === 'ECONNABORTED') {
+      console.log('   提示: 请求超时，可能网络问题或需要代理访问 Telegram');
+    }
+    return false;
   }
 }
 
