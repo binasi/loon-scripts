@@ -57,20 +57,36 @@ async function getUserInfo(token) {
     });
 
     if (response.status === 200 && response.data) {
-      const data = response.data.data || response.data;
-      console.log(`✅ 用户信息获取成功`);
+      // ⭐ 关键：打印完整的原始数据
+      console.log('📦 完整用户信息数据:');
+      console.log(JSON.stringify(response.data, null, 2));
       
-      // 提取关键信息
+      const data = response.data.data || response.data;
+      
+      // 打印所有可能相关的字段
+      console.log('\n🔍 可能的流量相关字段:');
+      console.log('  u:', data.u);
+      console.log('  d:', data.d);
+      console.log('  transfer_enable:', data.transfer_enable);
+      console.log('  transfer_used:', data.transfer_used);
+      console.log('  transfer_total:', data.transfer_total);
+      console.log('  used:', data.used);
+      console.log('  total:', data.total);
+      console.log('  upload:', data.upload);
+      console.log('  download:', data.download);
+      
       const userInfo = {
         email: data.email || data.user_email || '未知',
-        // 流量相关字段可能的命名
         transferUsed: data.u || data.transfer_used || data.used || 0,
         transferTotal: data.transfer_enable || data.transfer_total || data.total || 0,
         transferRemain: data.d || data.transfer_remain || 0,
         expireTime: data.expired_at || data.expire_time || null,
-        planName: data.plan?.name || data.plan_name || null
+        planName: data.plan?.name || data.plan_name || null,
+        // 保存原始数据用于调试
+        rawData: data
       };
       
+      console.log(`\n✅ 解析后的用户信息:`);
       console.log(`   📧 邮箱: ${userInfo.email}`);
       console.log(`   📊 已用: ${formatTraffic(userInfo.transferUsed)}`);
       console.log(`   📊 总量: ${formatTraffic(userInfo.transferTotal)}`);
@@ -78,6 +94,7 @@ async function getUserInfo(token) {
       return userInfo;
     } else {
       console.log(`⚠️ 用户信息获取失败: HTTP ${response.status}`);
+      console.log('响应数据:', response.data);
       return null;
     }
   } catch (error) {
