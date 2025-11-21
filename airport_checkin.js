@@ -12,7 +12,8 @@ const CONFIG = {
   name: '我的机场',
   url: 'https://7m9gi9norz.1095813.xyz',
   checkinPath: '/api/v1/user/trial/checkin',
-  userInfoPath: '/api/v1/user/info',  // 用户信息接口
+  userInfoPath: '/api/v1/user/info',
+  subscribePath: '/api/v1/user/getSubscribe',  // 订阅信息（包含流量）
 };
 
 // =============== 获取Token ===============
@@ -20,10 +21,6 @@ function getTokens() {
   const token = process.env.AIRPORT_TOKEN || '';
   if (!token) {
     console.log('❌ 错误：未配置 AIRPORT_TOKEN 环境变量');
-    console.log('\n📝 配置方法：');
-    console.log('1. 进入青龙面板 -> 环境变量');
-    console.log('2. 新建变量：AIRPORT_TOKEN');
-    console.log('3. 变量值填入你的授权Token');
     return [];
   }
   return token.split(/[&\n]/).map(t => t.trim()).filter(t => t);
@@ -38,9 +35,54 @@ function formatTraffic(bytes) {
   return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + units[i];
 }
 
+// =============== 获取流量信息（从订阅接口）===============
+async function getSubscribeInfo(token) {
+  try {
+    const url = `${CONFIG.url}${CONFIG.subscribePath}`;
+    console.log(`📡 获取订阅信息: ${url}`);
+    
+    const response = await axios({
+      method: 'GET',
+      url: url,
+      headers: {
+        'Authorization': token,
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      timeout: 10000,
+      validateStatus: () => true
+    });
+
+    if (response.status === 200 && response.data) {
+      console.log('📦 订阅信息:', JSON.stringify(response.data, null, 2));
+      
+      const data = response.data.data || response.data;
+      
+      // 提取流量信息
+      let transferUsed = 0;
+      let transferTotal = 0;
+      
+      // V2Board 常见格式
+      if (data.u !== undefined && data.d !== undefined) {
+        transferUsed = (data.u || 0) + (data.d || 0);
+        transferTotal = data.transfer_enable || 0;
+        console.log('✅ 从订阅信息获取到流量数据');
+      }
+      
+      return { transferUsed, transferTotal };
+    }
+    
+    return null;
+  } catch (error) {
+    console.log(`⚠️ 订阅信息获取失败:`, error.message);
+    return null;
+  }
+}
+
 // =============== 获取用户信息 ===============
 async function getUserInfo(token) {
   try {
+    // 1. 获取基本用户信息
     const url = `${CONFIG.url}${CONFIG.userInfoPath}`;
     console.log(`📡 获取用户信息: ${url}`);
     
@@ -57,44 +99,51 @@ async function getUserInfo(token) {
     });
 
     if (response.status === 200 && response.data) {
-      // ⭐ 关键：打印完整的原始数据
-      console.log('📦 完整用户信息数据:');
-      console.log(JSON.stringify(response.data, null, 2));
-      
       const data = response.data.data || response.data;
       
-      // 打印所有可能相关的字段
-      console.log('\n🔍 可能的流量相关字段:');
-      console.log('  u:', data.u);
-      console.log('  d:', data.d);
-      console.log('  transfer_enable:', data.transfer_enable);
-      console.log('  transfer_used:', data.transfer_used);
-      console.log('  transfer_total:', data.transfer_total);
-      console.log('  used:', data.used);
-      console.log('  total:', data.total);
-      console.log('  upload:', data.upload);
-      console.log('  download:', data.download);
+      console.log('📦 用户信息 API 返回:', JSON.stringify(data, null, 2));
+      
+      let transferUsed = 0;
+      let transferTotal = data.transfer_enable || 0;
+      
+      // 尝试从用户信息接口获取流量
+      if (data.u !== undefined && data.d !== undefined) {
+        transferUsed = (data.u || 0) + (data.d || 0);
+        console.log('✅ 从用户信息获取到流量数据');
+      } else {
+        // 2. 如果用户信息没有流量，尝试订阅接口
+        console.log('ℹ️ 用户信息中无流量数据，尝试订阅接口...');
+        const subscribeInfo = await getSubscribeInfo(token);
+        
+        if (subscribeInfo && subscribeInfo.transferUsed > 0) {
+          transferUsed = subscribeInfo.transferUsed;
+          if (subscribeInfo.transferTotal > 0) {
+            transferTotal = subscribeInfo.transferTotal;
+          }
+        } else {
+          console.log('⚠️ 无法获取流量使用数据，可能是试用账号');
+        }
+      }
       
       const userInfo = {
-        email: data.email || data.user_email || '未知',
-        transferUsed: data.u || data.transfer_used || data.used || 0,
-        transferTotal: data.transfer_enable || data.transfer_total || data.total || 0,
-        transferRemain: data.d || data.transfer_remain || 0,
-        expireTime: data.expired_at || data.expire_time || null,
-        planName: data.plan?.name || data.plan_name || null,
-        // 保存原始数据用于调试
-        rawData: data
+        email: data.email || '未知',
+        transferUsed: transferUsed,
+        transferTotal: transferTotal,
+        expireTime: data.expired_at,
+        planId: data.plan_id,
+        deviceLimit: data.device_limit,
+        uuid: data.uuid
       };
       
       console.log(`\n✅ 解析后的用户信息:`);
       console.log(`   📧 邮箱: ${userInfo.email}`);
       console.log(`   📊 已用: ${formatTraffic(userInfo.transferUsed)}`);
       console.log(`   📊 总量: ${formatTraffic(userInfo.transferTotal)}`);
+      console.log(`   📱 设备限制: ${userInfo.deviceLimit || '无限'}`);
       
       return userInfo;
     } else {
       console.log(`⚠️ 用户信息获取失败: HTTP ${response.status}`);
-      console.log('响应数据:', response.data);
       return null;
     }
   } catch (error) {
@@ -151,12 +200,14 @@ async function checkin(token, index) {
           rewardTraffic = data.data.bonus;
         }
         
-        // 提取消息
         const rawMsg = data.message || data.msg || '';
         
-        if (data.ret === 0 || data.code === 0 || data.status === 'success' || data.data?.success) {
+        if (data.data?.success === true) {
           console.log(`✅ 【${name}】签到成功！`);
           message = `签到成功${rewardTraffic ? `，获得 ${rewardTraffic}GB 流量` : ''}`;
+        } else if (data.data?.success === false && data.data?.reason === 'already') {
+          console.log(`ℹ️ 【${name}】今天已签到过`);
+          message = '今日已签到';
         } else if (rawMsg && (rawMsg.includes('重复') || rawMsg.includes('已签到'))) {
           console.log(`ℹ️ 【${name}】今天已签到过`);
           message = '今日已签到';
@@ -193,7 +244,7 @@ async function checkin(token, index) {
       console.log(`📛 服务器返回:`, error.response.data);
     } else if (error.request) {
       errorMsg = '网络超时或无响应';
-      console.log(`📛 网络错误: 请检查网络连接`);
+      console.log(`📛 网络错误`);
     } else {
       errorMsg = error.message;
       console.log(`📛 错误:`, error.message);
@@ -211,81 +262,44 @@ async function checkin(token, index) {
 
 // =============== 发送通知 ===============
 async function sendNotify(title, content) {
-  // 方法1: 尝试使用青龙面板的 sendNotify
+  // 尝试 sendNotify
   try {
-    let notify;
-    const paths = [
-      './sendNotify.js',
-      './sendNotify',
-      '../sendNotify.js',
-      '/ql/scripts/sendNotify.js',
-      '/ql/scripts/sendNotify'
-    ];
-    
+    const paths = ['./sendNotify', '../sendNotify', '/ql/scripts/sendNotify'];
     for (const path of paths) {
       try {
-        notify = require(path);
-        console.log(`📢 找到 sendNotify 模块: ${path}`);
+        const notify = require(path);
         await notify.sendNotify(title, content);
         console.log('✅ 通知发送成功（sendNotify）');
         return true;
-      } catch (e) {
-        // 继续尝试下一个路径
-      }
+      } catch (e) {}
     }
-  } catch (e) {
-    console.log('ℹ️ sendNotify 模块不可用');
-  }
+  } catch (e) {}
   
-  // 方法2: 使用 Telegram Bot API
+  // Telegram
   const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
-  const TG_USER_ID = process.env.TG_USER_ID || process.env.TELEGRAM_CHAT_ID || process.env.TG_CHAT_ID;
-  
-  console.log('\n🔍 Telegram 配置检查:');
-  console.log(`  TG_BOT_TOKEN: ${TG_BOT_TOKEN ? '✅ 已配置' : '❌ 未配置'}`);
-  console.log(`  TG_USER_ID: ${TG_USER_ID ? '✅ 已配置' : '❌ 未配置'}`);
+  const TG_USER_ID = process.env.TG_USER_ID || process.env.TELEGRAM_CHAT_ID;
   
   if (!TG_BOT_TOKEN || !TG_USER_ID) {
-    console.log('❌ Telegram 环境变量未完整配置，跳过通知');
+    console.log('ℹ️ 未配置通知');
     return false;
   }
   
   try {
-    const message = `${title}\n\n${content}`;
     const url = `https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`;
-    
-    console.log(`📤 正在发送 Telegram 通知...`);
-    
     const response = await axios.post(url, {
       chat_id: TG_USER_ID,
-      text: message,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true
-    }, {
-      timeout: 15000
-    });
+      text: `${title}\n\n${content}`,
+      parse_mode: 'HTML'
+    }, { timeout: 15000 });
     
     if (response.data.ok) {
       console.log('✅ Telegram 通知发送成功');
       return true;
-    } else {
-      console.log('❌ Telegram API 返回失败:', response.data);
-      return false;
     }
   } catch (error) {
-    console.log('❌ Telegram 通知发送失败:', error.message);
-    if (error.response) {
-      console.log('   API 错误:', error.response.data);
-      if (error.response.status === 401) {
-        console.log('   提示: Bot Token 可能不正确');
-      } else if (error.response.status === 400) {
-        console.log('   提示: Chat ID 可能不正确');
-      }
-    } else if (error.code === 'ECONNABORTED') {
-      console.log('   提示: 请求超时，可能网络问题或需要代理访问 Telegram');
-    }
-    return false;
+    console.log('❌ 通知发送失败:', error.message);
   }
+  return false;
 }
 
 // =============== 主程序 ===============
@@ -309,14 +323,13 @@ async function main() {
     const result = await checkin(tokens[i], i + 1);
     results.push(result);
     
-    // 多账号间隔3秒
     if (i < tokens.length - 1) {
       console.log('\n⏳ 等待3秒后继续...');
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
   
-  // 统计结果
+  // 统计
   console.log(`\n${'='.repeat(50)}`);
   console.log('📊 签到汇总');
   console.log(`${'='.repeat(50)}`);
@@ -325,19 +338,20 @@ async function main() {
   const failCount = results.length - successCount;
   
   console.log(`✅ 成功: ${successCount} 个`);
-  console.log(`❌ 失败: ${failCount} 个`);
-  console.log('');
+  console.log(`❌ 失败: ${failCount} 个\n`);
   
   results.forEach(r => {
     const icon = r.success ? '✅' : '❌';
     console.log(`${icon} ${r.name}: ${r.message}`);
     if (r.userInfo) {
       console.log(`   📧 ${r.userInfo.email}`);
-      console.log(`   📊 ${formatTraffic(r.userInfo.transferUsed)} / ${formatTraffic(r.userInfo.transferTotal)}`);
+      if (r.userInfo.transferUsed > 0 || r.userInfo.transferTotal > 0) {
+        console.log(`   📊 ${formatTraffic(r.userInfo.transferUsed)} / ${formatTraffic(r.userInfo.transferTotal)}`);
+      }
     }
   });
   
-  // =============== 构建通知消息（新格式）===============
+  // 构建通知
   let notifyMsg = `📢 <b>✈️ ${CONFIG.name}签到通知</b>\n\n`;
   notifyMsg += `⏰ ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}\n`;
   notifyMsg += `📊 统计: 成功 ${successCount} / 失败 ${failCount}\n\n`;
@@ -348,33 +362,27 @@ async function main() {
     notifyMsg += `${icon} <b>${r.name}</b>\n`;
     notifyMsg += `   ${r.message}\n`;
     
-    // 添加用户信息
     if (r.userInfo) {
       notifyMsg += `   📧 账号: <code>${r.userInfo.email}</code>\n`;
       
-      const used = formatTraffic(r.userInfo.transferUsed);
-      const total = formatTraffic(r.userInfo.transferTotal);
-      const usedPercent = r.userInfo.transferTotal > 0 
-        ? ((r.userInfo.transferUsed / r.userInfo.transferTotal) * 100).toFixed(1)
-        : 0;
-      
-      notifyMsg += `   📊 流量: ${used} / ${total} (${usedPercent}%)\n`;
-      
-      // 如果有套餐信息
-      if (r.userInfo.planName) {
-        notifyMsg += `   💎 套餐: ${r.userInfo.planName}\n`;
+      if (r.userInfo.transferUsed > 0 || r.userInfo.transferTotal > 0) {
+        const used = formatTraffic(r.userInfo.transferUsed);
+        const total = formatTraffic(r.userInfo.transferTotal);
+        const usedPercent = r.userInfo.transferTotal > 0 
+          ? ((r.userInfo.transferUsed / r.userInfo.transferTotal) * 100).toFixed(1)
+          : 0;
+        
+        notifyMsg += `   📊 流量: ${used} / ${total} (${usedPercent}%)\n`;
+      } else {
+        notifyMsg += `   📊 流量: 试用账号 / 无统计\n`;
       }
       
-      // 如果有过期时间
-      if (r.userInfo.expireTime) {
-        const expireDate = new Date(r.userInfo.expireTime * 1000).toLocaleDateString('zh-CN');
-        notifyMsg += `   ⏰ 到期: ${expireDate}\n`;
+      if (r.userInfo.deviceLimit) {
+        notifyMsg += `   📱 设备限制: ${r.userInfo.deviceLimit} 台\n`;
       }
     }
     
     notifyMsg += '\n';
-    
-    // 每个账号之间加分隔线（除了最后一个）
     if (index < results.length - 1) {
       notifyMsg += `${'─'.repeat(30)}\n\n`;
     }
