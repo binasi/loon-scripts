@@ -28,11 +28,35 @@ function getTokens() {
 
 // =============== 格式化流量 ===============
 function formatTraffic(bytes) {
-  if (!bytes || bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  // 处理无效值
+  if (!bytes || bytes === 0 || isNaN(bytes)) {
+    return '0 B';
+  }
+  
+  // 确保是数字类型
+  bytes = Number(bytes);
+  
+  // 处理负数
+  if (bytes < 0) {
+    return '0 B';
+  }
+  
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   const k = 1024;
+  
+  // 防止 log 计算错误
+  if (bytes < k) {
+    return bytes.toFixed(2) + ' B';
+  }
+  
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + units[i];
+  
+  // 确保索引在合理范围内
+  const unitIndex = Math.min(i, units.length - 1);
+  
+  const value = bytes / Math.pow(k, unitIndex);
+  
+  return value.toFixed(2) + ' ' + units[unitIndex];
 }
 
 // =============== 获取流量信息（从订阅接口）===============
@@ -54,7 +78,7 @@ async function getSubscribeInfo(token) {
     });
 
     if (response.status === 200 && response.data) {
-      console.log('📦 订阅信息:', JSON.stringify(response.data, null, 2));
+      console.log('📦 订阅信息原始数据:', JSON.stringify(response.data, null, 2));
       
       const data = response.data.data || response.data;
       
@@ -64,12 +88,16 @@ async function getSubscribeInfo(token) {
       
       // V2Board 常见格式
       if (data.u !== undefined && data.d !== undefined) {
-        transferUsed = (data.u || 0) + (data.d || 0);
-        transferTotal = data.transfer_enable || 0;
+        transferUsed = Number(data.u || 0) + Number(data.d || 0);
+        transferTotal = Number(data.transfer_enable || 0);
         console.log('✅ 从订阅信息获取到流量数据');
+        console.log(`   u=${data.u}, d=${data.d}, transfer_enable=${data.transfer_enable}`);
       }
       
-      return { transferUsed, transferTotal };
+      return { 
+        transferUsed: Number(transferUsed) || 0, 
+        transferTotal: Number(transferTotal) || 0 
+      };
     }
     
     return null;
@@ -101,29 +129,36 @@ async function getUserInfo(token) {
     if (response.status === 200 && response.data) {
       const data = response.data.data || response.data;
       
-      console.log('📦 用户信息 API 返回:', JSON.stringify(data, null, 2));
+      // 🔍 调试：打印完整数据
+      console.log('📦 用户信息原始数据:', JSON.stringify(data, null, 2));
       
       let transferUsed = 0;
-      let transferTotal = data.transfer_enable || 0;
+      let transferTotal = 0;
       
       // 尝试从用户信息接口获取流量
       if (data.u !== undefined && data.d !== undefined) {
-        transferUsed = (data.u || 0) + (data.d || 0);
+        transferUsed = Number(data.u || 0) + Number(data.d || 0);
+        transferTotal = Number(data.transfer_enable || 0);
         console.log('✅ 从用户信息获取到流量数据');
+        console.log(`   原始值: u=${data.u}, d=${data.d}, transfer_enable=${data.transfer_enable}`);
+        console.log(`   计算值: used=${transferUsed}, total=${transferTotal}`);
       } else {
         // 2. 如果用户信息没有流量，尝试订阅接口
         console.log('ℹ️ 用户信息中无流量数据，尝试订阅接口...');
         const subscribeInfo = await getSubscribeInfo(token);
         
-        if (subscribeInfo && subscribeInfo.transferUsed > 0) {
-          transferUsed = subscribeInfo.transferUsed;
-          if (subscribeInfo.transferTotal > 0) {
-            transferTotal = subscribeInfo.transferTotal;
-          }
+        if (subscribeInfo) {
+          transferUsed = Number(subscribeInfo.transferUsed || 0);
+          transferTotal = Number(subscribeInfo.transferTotal || 0);
+          console.log(`   订阅接口: used=${transferUsed}, total=${transferTotal}`);
         } else {
-          console.log('⚠️ 无法获取流量使用数据，可能是试用账号');
+          console.log('⚠️ 无法获取流量使用数据');
         }
       }
+      
+      // 确保数据类型正确
+      transferUsed = Number(transferUsed) || 0;
+      transferTotal = Number(transferTotal) || 0;
       
       const userInfo = {
         email: data.email || '未知',
@@ -137,8 +172,10 @@ async function getUserInfo(token) {
       
       console.log(`\n✅ 解析后的用户信息:`);
       console.log(`   📧 邮箱: ${userInfo.email}`);
-      console.log(`   📊 已用: ${formatTraffic(userInfo.transferUsed)}`);
-      console.log(`   📊 总量: ${formatTraffic(userInfo.transferTotal)}`);
+      console.log(`   📊 已用(原始): ${userInfo.transferUsed} bytes`);
+      console.log(`   📊 总量(原始): ${userInfo.transferTotal} bytes`);
+      console.log(`   📊 已用(格式化): ${formatTraffic(userInfo.transferUsed)}`);
+      console.log(`   📊 总量(格式化): ${formatTraffic(userInfo.transferTotal)}`);
       console.log(`   📱 设备限制: ${userInfo.deviceLimit || '无限'}`);
       
       return userInfo;
@@ -151,7 +188,6 @@ async function getUserInfo(token) {
     return null;
   }
 }
-
 // =============== 签到函数 ===============
 async function checkin(token, index) {
   const name = `账号${index}`;
