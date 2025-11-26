@@ -2,7 +2,7 @@
  * 文件名: jingmeng_wm_remover.js
  * 平台: Loon (script-response-body)
  * 功能: 尝试修改即梦 App API 响应中的图片 URL，以获取无水印版本。
- * 作者: Gemini
+ * 作者: Lemon
  */
 
 (function() {
