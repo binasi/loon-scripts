@@ -94,3 +94,17 @@
   
 })();
 
+
+
+[MITM]
+# 步骤 1: 将此处的域名替换为即梦 App 实际使用的 API 域名。
+# 示例：假设即梦App使用 api.jingmeng.app
+hostname = api.jingmeng.app, YOUR_JINGMENG_API_HOST
+
+[Script]
+# 步骤 2: 替换下方正则表达式为您实际抓取到的、返回图片 JSON 数据的 API 接口。
+# 示例：假设图片链接在 /api/v1/image/download 接口返回
+# 需要开启 requires-body=true 才能读取和修改响应体。
+^https?:\/\/(www\.)?YOUR_JINGMENG_API_REGEX script-response-body script-path=jingmeng_wm_remover.js, requires-body=true, timeout=10
+
+
